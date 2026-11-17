@@ -1,0 +1,27 @@
+name: 成績の自動更新
+on:
+  schedule:
+    - cron: "30 20 * * *"   # 毎日 05:30(日本時間)
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: 成績を追記して、特徴量を作り直す
+        run: python daily_update.py
+      - name: 潮のデータ(先月〜来月)
+        run: python fetch_tide736.py $(date -d '-1 month' +%Y-%m) $(date -d '+1 month' +%Y-%m) || true
+      - name: 変更があればコミット
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A data
+          git diff --cached --quiet || (git commit -m "成績を更新" && git push)

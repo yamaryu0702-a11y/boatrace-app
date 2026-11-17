@@ -27,9 +27,44 @@ LOCK = threading.Lock()
 st.set_page_config(page_title="ボートレース予想", page_icon="🚤", layout="wide")
 st.markdown("""
 <style>
-  .hero { background: linear-gradient(135deg,#0a1426 0%,#0f2a4d 55%,#0b5d73 135%); border:1px solid #1c2b44; border-radius:16px; padding:18px 22px; margin-bottom:12px; }
+  :root { color-scheme: dark; }
+  .stApp {
+    background:
+      radial-gradient(900px 480px at 8% -8%, rgba(34,211,238,.16), transparent 62%),
+      radial-gradient(800px 460px at 100% 0%, rgba(99,102,241,.18), transparent 58%),
+      radial-gradient(700px 500px at 50% 115%, rgba(14,116,144,.14), transparent 60%),
+      linear-gradient(180deg,#06080c 0%,#0a0f17 55%,#06080c 100%);
+    background-attachment: fixed;
+    color: #e8edf5;
+  }
+  header[data-testid="stHeader"] { background: transparent; }
+  .stApp, .stApp p, .stApp label, .stApp li, .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+  .stApp div[data-testid="stMarkdownContainer"], .stApp div[data-testid="stCaptionContainer"] { color: #e8edf5; }
+  .stApp h2, .stApp h3 { letter-spacing: .03em; }
+  .stApp h2 { border-left: 4px solid #22d3ee; padding-left: 12px; }
+  .stButton > button { background: rgba(34,211,238,.10); border: 1px solid #22d3ee; color: #67e8f9; border-radius: 999px; }
+  .stButton > button:hover { background: rgba(34,211,238,.22); border-color: #67e8f9; color: #fff; }
+  div[data-testid="stExpander"], div[data-testid="stDataFrame"] { background: rgba(17,21,28,.72); border: 1px solid #232a36; border-radius: 14px; }
+  div[data-testid="stVerticalBlockBorderWrapper"] { border-radius: 14px; }
+  .hero { background: linear-gradient(135deg,#0a1426 0%,#0f2a4d 55%,#0b5d73 135%); border:1px solid #1c2b44; border-radius:16px; padding:18px 22px; margin-bottom:12px; box-shadow:0 14px 40px -18px rgba(34,211,238,.35); }
   .hero h1 { color:#fff; font-size:1.7rem; margin:0; letter-spacing:.04em; }
   .hero p { color:#a9bddb; margin:6px 0 0; font-size:.9rem; }
+  .wrap { overflow-x:auto; border:1px solid #232a36; border-radius:14px; background:#11151c; box-shadow:0 8px 24px -16px #000; margin:6px 0 10px; }
+  .wrap table { border-collapse:collapse; width:100%; font-size:.82rem; font-variant-numeric:tabular-nums; }
+  .wrap th { background:#0d1219; color:#9fb0c6; font-weight:600; font-size:.74rem; letter-spacing:.03em; text-align:right; padding:8px 10px; border-bottom:1px solid #232a36; white-space:nowrap; }
+  .wrap td { text-align:right; padding:7px 10px; border-bottom:1px solid #1b212b; white-space:nowrap; color:#e8edf5; }
+  .wrap th.l, .wrap td.l { text-align:left; }
+  .wrap tr:last-child td { border-bottom:0; }
+  .wrap td.race { font-weight:700; color:#22d3ee; font-size:1.05em; }
+  .wrap td.hot { color:#fbbf24; background:rgba(251,191,36,.14); font-weight:700; }
+  .wrap td.good { color:#34d399; background:rgba(52,211,153,.14); font-weight:700; }
+  .chip { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; font-size:12px; font-weight:700; border:1px solid rgba(255,255,255,.35); margin-right:2px; }
+  .seg { display:flex; height:18px; border-radius:9px; overflow:hidden; background:#232a36; margin:6px 0; }
+  .seg span { display:block; height:100%; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:.8rem; margin-bottom:8px; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+  .card { border:1px solid #232a36; border-radius:14px; background:#11151c; padding:12px 16px; box-shadow:0 8px 24px -16px #000; margin-bottom:10px; }
+  .card h4 { margin:0 0 6px; font-size:.95rem; }
   .tag { display:inline-block; padding:3px 10px; margin:2px 6px 2px 0; border-radius:10px; border-left:3px solid #22d3ee; background:#0d1219; font-size:.85rem; }
   .tag.warn { border-left-color:#fbbf24; color:#fbbf24; }
 </style>""", unsafe_allow_html=True)
@@ -101,20 +136,44 @@ def pie(df, key, title):
         color=alt.Color("label:N", scale=alt.Scale(domain=list(d.label), range=colors), legend=alt.Legend(title=title, orient="right")),
         order=alt.Order(f"{key}:Q"),
         tooltip=["label:N"]).properties(height=230)
-    return ch
+    return ch.configure(background="transparent").configure_view(strokeWidth=0).configure_legend(labelColor="#e8edf5", titleColor="#9fb0c6", labelFontSize=12)
 
 
 def kim_bar(r):
-    d = pd.DataFrame([{"決まり手": n, "確率": r[f]} for n, f, _ in KIM])
-    return alt.Chart(d).mark_bar().encode(
-        y=alt.Y("決まり手:N", sort=[n for n, _, _ in KIM], title=None),
-        x=alt.X("確率:Q", title="確率(%)", scale=alt.Scale(domain=[0, 100])),
-        color=alt.Color("決まり手:N", scale=alt.Scale(domain=[n for n, _, _ in KIM], range=[c for _, _, c in KIM]), legend=None),
-        tooltip=["決まり手", "確率"]).properties(height=170)
+    segs = "".join(f'<span style="width:{max(float(r[f]), 0.5)}%;background:{c}"></span>' for _, f, c in KIM)
+    leg = "".join(f'<span><i style="background:{c}"></i>{n} <b>{int(r[f])}</b>%</span>' for n, f, c in KIM)
+    return f'<div class="seg">{segs}</div><div class="legend">{leg}</div>'
 
 
 def combo_emoji(c):
     return " ".join(EMOJI[int(x) - 1] + x for x in c.split("-"))
+
+
+def chip(n):
+    n = int(n)
+    return f'<span class="chip" style="background:{BOAT[n - 1]};color:{"#1a1a1a" if n in (1, 5) else "#fff"}">{n}</span>'
+
+
+def combo_html(c):
+    return "".join(chip(x) for x in str(c).split("-"))
+
+
+def shade(v, mx):
+    if v is None or pd.isna(v):
+        return ""
+    w = max(0, min(100, float(v) / mx * 100))
+    return f"background:linear-gradient(90deg,rgba(34,211,238,.28) {w:.0f}%,transparent {w:.0f}%)"
+
+
+def num(v, fmt="{:.0f}"):
+    return "—" if v is None or pd.isna(v) else fmt.format(v)
+
+
+def html_table(heads, rows):
+    """heads: [(ラベル, 左寄せか)]、rows: [[(html, class, style), ...]]。1行の文字列にして返す(markdownに崩されないため)"""
+    th = "".join(f'<th class="{"l" if l else ""}">{h}</th>' for h, l in heads)
+    body = "".join("<tr>" + "".join(f'<td class="{c}" style="{s}">{h}</td>' for h, c, s in row) + "</tr>" for row in rows)
+    return f'<div class="wrap"><table><thead><tr>{th}</tr></thead><tbody>{body}</tbody></table></div>'
 
 
 # ------------------------------------------------------------------ 本体
@@ -171,16 +230,19 @@ if ss.get("race") is None:
         st.rerun() if n else None
     n_ex = int(B.groupby("race").exhibit.apply(lambda s: s.notna().all()).sum())
     b2.caption(f"展示タイム入りのレース: {n_ex}/{len(races)}　／　モデルの学習: {trained} まで")
-    show = pd.DataFrame({
-        "R": R.race, "締切": R.deadline, "1号艇1着%": R.p1, "逃げ%": R.p_nige, "差し%": R.p_sashi, "まくり%": R.p_makuri,
-        "まくり差し%": R.p_mz, "万舟%": R.mando, "潮": R.tide, "潮の判定": R.tide_judge, "目印": R.n_tags,
-        "本命の3連単": R.top_combo.map(combo_emoji), "確率%": R.top_prob})
-    st.caption("行をクリックすると、そのレースの詳細ページに移ります。")
-    ev = st.dataframe(show, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row",
-                      column_config={"1号艇1着%": st.column_config.ProgressColumn("1号艇1着%", min_value=0, max_value=100, format="%d"),
-                                     "万舟%": st.column_config.NumberColumn("万舟%", help="25%以上は万舟が出やすい目安")})
-    if ev.selection.rows:
-        ss["race"] = int(R.iloc[ev.selection.rows[0]].race)
+    heads = [("R", True), ("締切", False), ("1号艇の1着(%)", False), ("逃げ(%)", False), ("差し(%)", False), ("まくり(%)", False),
+             ("まくり差し(%)", False), ("万舟(%)", False), ("潮", True), ("潮の判定", True), ("目印", False), ("本命の3連単", False), ("確率(%)", False)]
+    rows = []
+    for _, x in R.iterrows():
+        mando_hot = pd.notna(x.mando) and x.mando >= 25
+        rows.append([(f"{int(x.race)}R", "l race", ""), (x.deadline or "—", "", ""), (num(x.p1), "", shade(x.p1, 100)),
+                     (num(x.p_nige), "", ""), (num(x.p_sashi), "", ""), (num(x.p_makuri), "", ""), (num(x.p_mz), "", ""),
+                     (num(x.mando), "hot" if mando_hot else "", ""), (x.tide or "—", "l", ""), (x.tide_judge or "—", "l", ""),
+                     (str(int(x.n_tags)), "good" if x.n_tags > 0 else "", ""), (combo_html(x.top_combo), "", ""), (num(x.top_prob, "{:.1f}"), "", "")])
+    st.markdown(html_table(heads, rows), unsafe_allow_html=True)
+    pick = st.pills("詳細を見るレースを選ぶ", [int(x) for x in R.race], selection_mode="single", format_func=lambda x: f"{x}R")
+    if pick is not None:
+        ss["race"] = int(pick)
         st.rerun()
     st.stop()
 
@@ -221,27 +283,22 @@ with st.expander("展示タイムを手入力して、再計算する", expanded
             st.rerun()
 
 # 艇の表
-tb = pd.DataFrame({"艇": [EMOJI[int(x) - 1] + f" {int(x)}" for x in bb.boat], "選手": bb.name, "級": bb["class"],
-                   "1着率%": bb.win, "3連対率%": bb.top3, "展示タイム": bb.exhibit, "モーター2連率%": bb.motor_2r})
-st.dataframe(tb, hide_index=True, width="stretch",
-             column_config={"1着率%": st.column_config.ProgressColumn("1着率%", min_value=0, max_value=80, format="%.1f"),
-                            "3連対率%": st.column_config.ProgressColumn("3連対率%", min_value=0, max_value=100, format="%.1f"),
-                            "展示タイム": st.column_config.NumberColumn("展示タイム", format="%.2f")})
+heads = [("艇", True), ("選手", True), ("級", True), ("1着率(%)", False), ("3連対率(%)", False), ("展示タイム", False), ("モーター2連率(%)", False)]
+rows = [[(chip(x.boat), "l", ""), (str(x["name"]), "l", ""), (str(x["class"]), "l", ""), (num(x.win, "{:.1f}"), "", shade(x.win, 80)),
+         (num(x.top3, "{:.1f}"), "", shade(x.top3, 100)), (num(x.exhibit, "{:.2f}"), "", ""), (num(x.motor_2r, "{:.1f}"), "", "")]
+        for _, x in bb.iterrows()]
+st.markdown(html_table(heads, rows), unsafe_allow_html=True)
 
 g1, g2 = st.columns(2)
 with g1:
-    st.markdown("**決まり手の確率(%)**　1号艇の1着 **{}%**　万舟 **{}%**".format(r.p1, "—" if pd.isna(r.mando) else int(r.mando)))
-    st.altair_chart(kim_bar(r), width="stretch")
-    st.markdown("**目印**(検証で回収率が比較的高かった条件。買いの推奨ではありません)")
-    tags = [t for t in str(r.tags).split(" / ") if t]
-    st.markdown("".join(f'<span class="tag{" warn" if t.startswith("万舟") else ""}">{t}</span>' for t in tags) or "当てはまる目印はありません",
-                unsafe_allow_html=True)
+    tags = [x for x in str(r.tags).split(" / ") if x]
+    tag_html = "".join(f'<span class="tag{" warn" if x.startswith("万舟") else ""}">{x}</span>' for x in tags) or "当てはまる目印はありません"
+    st.markdown(f'<div class="card"><h4>決まり手の確率(%)</h4>{kim_bar(r)}<p style="font-size:.8rem;margin:0 0 8px">1号艇の1着 <b>{r.p1}%</b>　万舟 <b>{"—" if pd.isna(r.mando) else int(r.mando)}%</b></p>'
+                f'<h4>目印</h4><div style="font-size:.78rem;color:#8b97a8;margin-bottom:4px">検証で回収率が比較的高かった条件。買いの推奨ではありません</div>{tag_html}</div>', unsafe_allow_html=True)
 with g2:
-    st.markdown("**3連単の確率 上位12通り**")
     tt = T[T.rid == r.rid].sort_values("rank")
-    st.dataframe(pd.DataFrame({"順位": tt["rank"], "出目": tt.combo.map(combo_emoji), "確率%": tt.prob}),
-                 hide_index=True, width="stretch", height=300,
-                 column_config={"確率%": st.column_config.ProgressColumn("確率%", min_value=0, max_value=10, format="%.2f")})
+    rows = [[(str(int(x["rank"])), "l", ""), (combo_html(x.combo), "l", ""), (num(x.prob, "{:.2f}"), "", shade(x.prob, 10))] for _, x in tt.iterrows()]
+    st.markdown('<div class="card"><h4>3連単の確率 上位12通り</h4>' + html_table([("順位", True), ("出目", True), ("確率(%)", False)], rows) + "</div>", unsafe_allow_html=True)
 
 st.markdown("**各艇が1着のときの、2着の確率(%)**")
 a = st.radio("1着の艇", [1, 2, 3, 4, 5, 6], horizontal=True, format_func=lambda x: f"{EMOJI[x - 1]} {x}号艇", key="pie1", label_visibility="collapsed")
@@ -250,16 +307,6 @@ p1v = s2.p_first.iloc[0] if len(s2) else 0
 pc1, pc2 = st.columns([1, 2])
 pc1.metric(f"{a}号艇が1着になる確率", f"{p1v}%")
 pc2.altair_chart(pie(s2, "second", "2着"), width="stretch")
-
-with st.expander("3着の確率を見る(1着・2着の艇を選ぶ)"):
-    x1, x2 = st.columns(2)
-    f = x1.radio("1着", [1, 2, 3, 4, 5, 6], horizontal=True, key="th1", format_func=lambda x: f"{EMOJI[x - 1]}{x}")
-    opts = [k for k in range(1, 7) if k != f]
-    s = x2.radio("2着", opts, horizontal=True, key="th2", format_func=lambda x: f"{EMOJI[x - 1]}{x}")
-    s3 = S3[(S3.rid == r.rid) & (S3["first"] == f) & (S3.second == s)]
-    if len(s3):
-        st.caption(f"{f}-{s}と入る確率は {s3.p_pair.iloc[0]}%。そのとき3着は:")
-        st.altair_chart(pie(s3, "third", "3着"), width="stretch")
 
 st.caption("数字はモデルの推定値です。検証でも、確率の高い出目を買った回収率は100%に届いていません。")
 

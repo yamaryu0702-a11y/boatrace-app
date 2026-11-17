@@ -74,9 +74,17 @@ st.markdown("""
 
 # ------------------------------------------------------------------ データ
 @st.cache_resource(show_spinner="学習データと特徴量を読み込み中…(初回のみ)")
-def load_state():
+def _load():
     E, mu, sd = ft.build_dataset()
     H = pd.read_csv("data/history.csv.gz", dtype={"venue": str, "regno": str, "finish": str, "course": str})
+    return E, mu, sd, H, ft.MOTOR_SD
+
+
+def load_state():
+    # build_dataset が features.MOTOR_SD を設定する。ファイル更新でモジュールが読み込み直されると、
+    # キャッシュ済みの結果だけが残って MOTOR_SD が None に戻るので、毎回、設定し直す
+    E, mu, sd, H, msd = _load()
+    ft.MOTOR_SD = msd
     return E, mu, sd, H
 
 

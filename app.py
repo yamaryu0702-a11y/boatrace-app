@@ -1,4 +1,4 @@
-﻿"""ボートレース予想(Streamlit)。平和島・多摩川。
+"""ボートレース予想(Streamlit)。平和島・多摩川。
 - 一覧(表紙)でレースを選ぶと詳細ページへ。展示タイムは、ボタンで公式サイトから取り込む/手入力で、その場で再計算する。
 - 予想の計算は predict.py と同じもの(指数v4)。成績データは、GitHub Actionsが毎朝更新する。
 """
@@ -58,6 +58,8 @@ st.markdown("""
   .wrap td.race { font-weight:700; color:#22d3ee; font-size:1.05em; }
   .wrap td.hot { color:#fbbf24; background:rgba(251,191,36,.14); font-weight:700; }
   .wrap td.good { color:#34d399; background:rgba(52,211,153,.14); font-weight:700; }
+  .rl { color:#22d3ee; text-decoration:none; border-bottom:1px dashed #22d3ee; }
+  .rl:hover { color:#fff; }
   .chip { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:6px; font-size:12px; font-weight:700; border:1px solid rgba(255,255,255,.35); margin-right:2px; }
   .seg { display:flex; height:18px; border-radius:9px; overflow:hidden; background:#232a36; margin:6px 0; }
   .seg span { display:block; height:100%; }
@@ -104,10 +106,47 @@ def compute(date_iso, venue, before_json):
     return out, pk["trained_through"]
 
 
+@st.cache_resource
+def exh_store():
+    """展示タイムの取り込み結果・手入力。ページを開き直しても残るよう、サーバー側に置く"""
+    return {"before": {}, "manual": {}}
+
+
+GAPS = [-0.08, -0.04, 0.0, 0.04, 0.08, 0.12]
+
+
+@st.cache_data(show_spinner="確率の変動を計算中…", max_entries=40)
+def sensitivity(date_iso, venue, race, before_json):
+    """1艇だけ展示タイムを動かして(平均より g 秒速い)、その艇の1着率・3連対率がどう変わるかをモデルで計算する"""
+    E, mu, sd, H = load_state()
+    bent, brace = get_program(date_iso)
+    before = {int(k): v for k, v in json.loads(before_json).items()}
+    L = P.build_live(date_iso, venue, bent, brace, E, H[H.date < date_iso], mu, sd, before)
+    L = L[L.race == race].sort_values("boat").reset_index(drop=True)
+    t = L.exhibit_time.to_numpy(float)
+    real = not np.isnan(t).any()
+    base = t if real else np.full(6, 6.75)
+    out = {}
+    with LOCK:
+        for k in range(6):
+            for g in GAPS:
+                tt = base.copy()
+                tt[k] = np.delete(base, k).mean() - g * 6 / 5
+                raw = -(tt - tt.mean())
+                L2 = L.copy()
+                L2["exhibit_time"] = tt
+                L2["exh_d"] = (raw - float(mu["exh_d"])) / float(sd["exh_d"])
+                rr, _ = P.predict_venue(L2, venue, date_iso)
+                d = rr[0][1].set_index("boat")
+                out[(k + 1, g)] = (float(d.loc[k + 1, "win_prob"]) * 100, float(d.loc[k + 1, "top3_prob"]) * 100)
+    cur = [float(np.mean(t) - x) for x in t] if real else None
+    return out, cur
+
+
 def merged_before(date_iso, venue):
-    ss = st.session_state
-    fetched = ss.get("before", {}).get((date_iso, venue), {})
-    manual = ss.get("manual", {}).get((date_iso, venue), {})
+    store = exh_store()
+    fetched = store["before"].get((date_iso, venue), {})
+    manual = store["manual"].get((date_iso, venue), {})
     out = {}
     for race in set(fetched) | set(manual):
         d = {int(b["boat"]): dict(b) for b in fetched.get(race, [])}
@@ -120,8 +159,7 @@ def merged_before(date_iso, venue):
 def fetch_exhibit(date_iso, venue, races):
     ymd = date_iso.replace("-", "")
     got = P.get_before(venue, ymd, races)
-    st.session_state.setdefault("before", {}).setdefault((date_iso, venue), {}).update(
-        {r: v for r, v in got.items() if v})
+    exh_store()["before"].setdefault((date_iso, venue), {}).update({r: v for r, v in got.items() if v})
     n = sum(1 for v in got.values() if any(str(b.get("exhibit_time", "")).strip() not in ("", "nan") for b in v))
     return n, len(races)
 
@@ -181,7 +219,12 @@ today = dt.datetime.now(JST).date()
 st.markdown('<div class="hero"><h1>🚤 ボートレース予想</h1><p>平和島・多摩川　指数v4(決まり手 × 艇の強さ × 潮 × モーター)</p></div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns([1, 2])
-date = c1.date_input("日付", today)
+qp = st.query_params
+try:
+    q_default = dt.date.fromisoformat(qp.get("d", ""))
+except ValueError:
+    q_default = today
+date = c1.date_input("日付", q_default)
 date_iso = date.isoformat()
 E, mu, sd, H = load_state()
 hmax = H.date.max()
@@ -204,12 +247,17 @@ if not venues:
     st.info(f"{date_iso} は、平和島・多摩川の開催がありません。")
     st.stop()
 
-venue = st.radio("場", venues, format_func=lambda v: NAMES[v], horizontal=True) if len(venues) > 1 else venues[0]
+venue = st.radio("場", venues, index=venues.index(qp.get("v")) if qp.get("v") in venues else 0, format_func=lambda v: NAMES[v], horizontal=True) if len(venues) > 1 else venues[0]
 if len(venues) == 1:
     st.subheader(NAMES[venue])
 races = sorted({k[1] for k in bent if k[0] == venue})
 
 ss = st.session_state
+if not ss.get("qp_done"):   # レース名のリンクから開いたとき、そのレースの詳細に飛ぶ
+    ss["qp_done"] = True
+    if qp.get("race", "").isdigit() and int(qp["race"]) in races and qp.get("d") == date_iso and qp.get("v") == venue:
+        ss["ctx"] = (date_iso, venue)
+        ss["race"] = int(qp["race"])
 if ss.get("ctx") != (date_iso, venue):
     ss["ctx"] = (date_iso, venue)
     ss["race"] = None
@@ -235,22 +283,30 @@ if ss.get("race") is None:
     rows = []
     for _, x in R.iterrows():
         mando_hot = pd.notna(x.mando) and x.mando >= 25
-        rows.append([(f"{int(x.race)}R", "l race", ""), (x.deadline or "—", "", ""), (num(x.p1), "", shade(x.p1, 100)),
+        rows.append([(f'<a class="rl" href="?d={date_iso}&amp;v={venue}&amp;race={int(x.race)}" target="_self">{int(x.race)}R</a>', "l race", ""), (x.deadline or "—", "", ""), (num(x.p1), "", shade(x.p1, 100)),
                      (num(x.p_nige), "", ""), (num(x.p_sashi), "", ""), (num(x.p_makuri), "", ""), (num(x.p_mz), "", ""),
                      (num(x.mando), "hot" if mando_hot else "", ""), (x.tide or "—", "l", ""), (x.tide_judge or "—", "l", ""),
                      (str(int(x.n_tags)), "good" if x.n_tags > 0 else "", ""), (combo_html(x.top_combo), "", ""), (num(x.top_prob, "{:.1f}"), "", "")])
     st.markdown(html_table(heads, rows), unsafe_allow_html=True)
-    pick = st.pills("詳細を見るレースを選ぶ", [int(x) for x in R.race], selection_mode="single", format_func=lambda x: f"{x}R")
-    if pick is not None:
-        ss["race"] = int(pick)
-        st.rerun()
+    st.caption("レース名(1R, 2R …)を押すと、そのレースの詳細ページに移ります。")
+    st.query_params.clear()
     st.stop()
 
 # ---- 詳細ページ ----
 race = ss["race"]
 r = R[R.race == race].iloc[0]
-if st.button("← レース一覧にもどる"):
+st.query_params.update({"d": date_iso, "v": venue, "race": str(race)})
+idx = races.index(race)
+n1, n2, n3 = st.columns(3)
+if n1.button("← レース一覧", width="stretch"):
     ss["race"] = None
+    st.query_params.clear()
+    st.rerun()
+if n2.button("‹ 前のレース", width="stretch", disabled=idx == 0):
+    ss["race"] = races[idx - 1]
+    st.rerun()
+if n3.button("次のレース ›", width="stretch", disabled=idx == len(races) - 1):
+    ss["race"] = races[idx + 1]
     st.rerun()
 st.header(f"{NAMES[venue]} {race}R　締切 {r.deadline or '—'}")
 if r.tide:
@@ -274,7 +330,7 @@ with st.expander("展示タイムを手入力して、再計算する", expanded
                                                     value=0.0 if pd.isna(b.exhibit) else float(b.exhibit), step=0.01, format="%.2f")
         st.caption("0.00 は未入力として扱います。6艇すべて入れると、展示タイムの差を使った予想になります。")
         if st.form_submit_button("この値で再計算"):
-            m = ss.setdefault("manual", {}).setdefault((date_iso, venue), {}).setdefault(race, {})
+            m = exh_store()["manual"].setdefault((date_iso, venue), {}).setdefault(race, {})
             for k, v in vals.items():
                 if v > 0:
                     m[k] = round(v, 2)
@@ -307,6 +363,26 @@ p1v = s2.p_first.iloc[0] if len(s2) else 0
 pc1, pc2 = st.columns([1, 2])
 pc1.metric(f"{a}号艇が1着になる確率", f"{p1v}%")
 pc2.altair_chart(pie(s2, "second", "2着"), width="stretch")
+
+st.markdown("**展示タイムの「平均からの差」による、確率の変動**")
+if st.checkbox("この数字を見る(各艇の展示タイムを、平均より速く/遅くしたときの1着率・3連対率)", key=f"sens_{race}"):
+    sens, cur = sensitivity(date_iso, venue, race, merged_before(date_iso, venue))
+    which = st.radio("見る確率", ["1着率", "3連対率"], horizontal=True, key=f"sensw_{race}", label_visibility="collapsed")
+    j = 0 if which == "1着率" else 1
+    heads = [("艇", True)] + ([("いまの差(秒)", False)] if cur else []) + [(("±0.00(平均)" if g == 0 else f"{g:+.2f}"), False) for g in GAPS]
+    rows = []
+    for k in range(1, 7):
+        v0 = sens[(k, 0.0)][j]
+        row = [(chip(k), "l", "")]
+        if cur:
+            row.append((f"{cur[k - 1]:+.3f}", "", "color:#9fb0c6"))
+        for g in GAPS:
+            v = sens[(k, g)][j]
+            row.append((f'{v:.1f}<span style="color:#8b97a8;font-size:.7rem"> ({v - v0:+.1f})</span>', "", "background:rgba(34,211,238,.10)" if g == 0 else shade(v, 100 if j else 60)))
+        rows.append(row)
+    st.markdown(html_table(heads, rows), unsafe_allow_html=True)
+    st.caption("列の「+0.04」は、その艇の展示タイムが、そのレースの平均より0.04秒速い場合です(−は遅い場合)。1艇だけを動かし、ほかの艇は今の値のままです。"
+               + ("" if cur else " ※展示タイム未取得のため、全艇が同じタイムの状態を基準にしています。") + " 括弧の中は、平均と同じ場合との差(ポイント)です。")
 
 st.caption("数字はモデルの推定値です。検証でも、確率の高い出目を買った回収率は100%に届いていません。")
 

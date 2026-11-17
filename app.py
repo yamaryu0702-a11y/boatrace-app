@@ -321,7 +321,7 @@ if f1.button("このレースの展示タイムを取り込む", width="stretch"
     if n:
         st.rerun()
     st.warning("展示タイムを取得できませんでした(展示前、またはサイトに接続できません)。下で手入力できます。")
-with st.expander("展示タイムを手入力して、再計算する", expanded=bb.exhibit.isna().any()):
+with st.expander("展示タイムを手入力して、再計算する", expanded=False):
     with st.form(f"manual_{race}"):
         cols = st.columns(6)
         vals = {}

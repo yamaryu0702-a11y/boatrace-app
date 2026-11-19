@@ -86,7 +86,8 @@ def main():
         i = args.index("--race")
         only = int(args[i + 1])
         del args[i:i + 2]
-    date = args[0] if args else dt.date.today().isoformat()
+    jst = dt.timezone(dt.timedelta(hours=9))
+    date = args[0] if args else dt.datetime.now(jst).date().isoformat()   # 日本時間の今日(GitHubのサーバーはUTCなので)
     ymd = date.replace("-", "")
     path = OUT / f"original_{ymd}.csv"
     # 既存分は残し、取れたレースだけ入れ替える(途中で何度実行しても、取れたものは消えない)

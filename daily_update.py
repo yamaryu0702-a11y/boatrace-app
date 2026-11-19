@@ -63,6 +63,8 @@ def main():
     for s in ("build_form.py", "build_course.py"):
         print("実行", s, flush=True)
         subprocess.run([sys.executable, "-W", "ignore", s], check=True, capture_output=True, env=env)
+    print("実行 ratings.py build", flush=True)   # 自作レーティングを、新しい成績まで作り直す(全期間で約2分)
+    subprocess.run([sys.executable, "-W", "ignore", "ratings.py", "build"], check=True, capture_output=True)
     print("更新した日:", ", ".join(got))
 
 

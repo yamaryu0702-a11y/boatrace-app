@@ -30,7 +30,7 @@ from parse import parse_b
 from trifecta_lib import COMBO, tri_probs
 
 NAMES = {"04": "平和島", "05": "多摩川"}
-RF = ["nat_win_d", "exh_d", "f20_st_d", "c_win_all_d", "cls_d", "motor_2r_d", "mo60_d"]
+RF = ["nat_win_d", "exh_d", "f20_st_d", "c_win_all_d", "cls_d", "motor_2r_d", "mo60_d", "rt_d"]
 KIM_NAMES = ft.KIM_NAMES
 
 
@@ -154,6 +154,20 @@ def get_before(venue, ymd, races):
         return dict(ex.map(one, races))
 
 
+_RSTATE = {}
+
+
+def rating_strength(L):
+    """自作レーティング(ratings.py)の、各艇の走る前の強さ。進入は枠番とみなす。状態ファイルが無いときは0"""
+    try:
+        import ratings
+        if "s" not in _RSTATE:
+            _RSTATE["s"] = pickle.load(open(ratings.STATE_FILE, "rb"))
+        return ratings.live_strength(_RSTATE["s"], L.regno.tolist(), L.venue.iloc[0], L.boat.tolist())
+    except Exception:
+        return [0.0] * len(L)
+
+
 def build_live(date, venue, bent, brace, E, H, mu, sd, before):
     rows = []
     for (v, r, b), d in bent.items():
@@ -178,8 +192,9 @@ def build_live(date, venue, bent, brace, E, H, mu, sd, before):
     L["mo60"], L["mx60"] = motor_scores(E, L, date, venue)
     L["key"] = date + "_" + venue + "_" + L.race.astype(str)
     L["cls"] = L["class"].map({"A1": 3, "A2": 2, "B1": 1, "B2": 0})
+    L["rt"] = rating_strength(L)
     g = L.groupby("key")
-    for c in ["nat_win", "loc_win", "motor_2r", "boat_2r", "cls", "weight", "c_win_all", "mo60", "mx60"]:
+    for c in ["nat_win", "loc_win", "motor_2r", "boat_2r", "cls", "weight", "c_win_all", "mo60", "mx60", "rt"]:
         L[c + "_d"] = L[c] - g[c].transform("mean")
     for c in ["f10_avg", "f20_st"]:
         L[c + "_d"] = -(L[c] - g[c].transform("mean"))

@@ -10,7 +10,7 @@ import tide736 as t7
 WARMUP = "2024-01-15"
 K = ["date", "venue", "race", "boat"]
 FEATS = ["nat_win_d", "loc_win_d", "motor_2r_d", "boat_2r_d", "cls_d", "weight_d", "exh_d",
-         "f20_st_d", "f10_avg_d", "c_win_all_d"]
+         "f20_st_d", "f10_avg_d", "c_win_all_d", "rt_d"]   # rt_d: 自作レーティング(ratings.py)のレース内の差
 LANES = [f"lane{i}" for i in range(1, 7)]
 TIDE = ["easy_1", "hard_1"]
 
@@ -58,6 +58,14 @@ def build_dataset():
     for c in ["f10_avg", "f20_st"]:
         E[c + "_d"] = -(E[c] - g[c].transform("mean"))
     E["exh_d"] = -(E.exhibit_time - g.exhibit_time.transform("mean"))
+    # 自作レーティング(走る前の強さ)。ファイルが無いときは0(=この特徴は使わない)
+    try:
+        RT = pd.read_csv("data/rating_feat.csv.gz", dtype={"venue": str})[["date", "venue", "race", "boat", "rt"]]
+        E = E.merge(RT, on=["date", "venue", "race", "boat"], how="left")
+        g = E.groupby("key")
+    except FileNotFoundError:
+        E["rt"] = 0.0
+    E["rt_d"] = E.rt.fillna(0) - E.groupby("key").rt.transform(lambda s: s.fillna(0).mean())
     E[FEATS] = E[FEATS].fillna(0)
     mu, sd = E[FEATS].mean(), E[FEATS].std()
     E[FEATS] = (E[FEATS] - mu) / sd

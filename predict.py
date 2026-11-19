@@ -415,7 +415,7 @@ def main():
         update_data(target)
     print("■ 準備: 学習データと特徴量を読み込み中...")
     E, mu, sd = ft.build_dataset()
-    H = pd.read_csv("data/history.csv", dtype={"venue": str, "regno": str, "finish": str, "course": str})
+    H = pd.read_csv("data/history.csv.gz", dtype={"venue": str, "regno": str, "finish": str, "course": str})
     H = H[H.date < date]
     print(f"  成績データ: {H.date.max()} まで / 学習データ: {E.date.max()} まで")
 

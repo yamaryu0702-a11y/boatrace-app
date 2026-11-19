@@ -126,7 +126,7 @@ WEATHER = {}   # (場, R) -> 展示時点の天候(風速・風向コード・�
 
 
 def wind_tag(venue, race):
-    """強風(4m以上)の北寄り/南寄りの目印。検証で、1号艇の1着が予想から外れやすかった条件(傾向であって確実ではない)。
+    """強風(4m以上)の北寄りの目印。過去3年で、1号艇の1着率が3〜5pt低く、まくり系が多かった(傾向であって確実ではない)。
     風向コードは16方位(13=北, 5=南。時計回りに22.5度ずつ)。"""
     w = WEATHER.get((venue, int(race)))
     try:
@@ -137,10 +137,8 @@ def wind_tag(venue, race):
         return None
     c = float(np.cos(np.deg2rad(((code - 13) % 16) * 22.5)))
     if c > 0.5:
-        return f"強風{ws:.0f}m・北寄り→1号艇が不利な傾向"
-    if c < -0.5:
-        return f"強風{ws:.0f}m・南寄り→1号艇が有利な傾向"
-    return None
+        return f"強風{ws:.0f}m・北寄り→1号艇が不利・まくり系が多い傾向"
+    return None   # 南寄りは過去3年で有利と言える差が無かったので、目印を出さない
 
 
 def get_before(venue, ymd, races):

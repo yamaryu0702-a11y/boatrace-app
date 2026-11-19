@@ -122,10 +122,34 @@ def tide_info(date, deadline):
         return None, np.nan, 0.0, 0, 0
 
 
+WEATHER = {}   # (場, R) -> 展示時点の天候(風速・風向コード・波高)。風の目印に使う
+
+
+def wind_tag(venue, race):
+    """強風(4m以上)の北寄り/南寄りの目印。検証で、1号艇の1着が予想から外れやすかった条件(傾向であって確実ではない)。
+    風向コードは16方位(13=北, 5=南。時計回りに22.5度ずつ)。"""
+    w = WEATHER.get((venue, int(race)))
+    try:
+        ws, code = float(w["wind_speed"]), int(w["wind_dir_code"])
+    except Exception:
+        return None
+    if ws < 4 or not 1 <= code <= 16:
+        return None
+    c = float(np.cos(np.deg2rad(((code - 13) % 16) * 22.5)))
+    if c > 0.5:
+        return f"強風{ws:.0f}m・北寄り→1号艇が不利な傾向"
+    if c < -0.5:
+        return f"強風{ws:.0f}m・南寄り→1号艇が有利な傾向"
+    return None
+
+
 def get_before(venue, ymd, races):
     def one(r):
         try:
-            return r, bi.parse(bi.fetch_html(venue, ymd, r))[0]
+            boats, w = bi.parse(bi.fetch_html(venue, ymd, r))
+            if w:
+                WEATHER[(venue, int(r))] = w
+            return r, boats
         except Exception:
             return r, []
     with ThreadPoolExecutor(max_workers=3) as ex:
@@ -272,6 +296,9 @@ def condition_tags(venue, race, pkim, p1, mp, easy):
             tags.append("1号艇有力・9R以降→3連単20点(検証87%)")
     if mp is not None and mp >= 0.25:
         tags.append("万舟注意(25%以上)")
+    wt = wind_tag(venue, race)
+    if wt:
+        tags.append(wt)
     return tags
 
 
@@ -325,6 +352,40 @@ def collect_app(venue, date, race, d, pkim, p, mp, label, L):
         APP["tri"].append({"rid": rid, "venue": venue, "race": int(race), "rank": rank, "combo": COMBO[i], "prob": round(float(p[i]) * 100, 2)})
 
 
+SCEN = []
+EXH_FAST, EXH_REST = 1.30, -0.30   # 展示タイム1位の艇/それ以外の艇の、標準的な exh_d(学習データの平均)
+
+
+def collect_scen(venue, L, date):
+    """「展示タイム1位が k号艇」と仮定した予想(k=1..6)。ダッシュボードで切り替えて見る用"""
+    from trifecta_lib import PERMS
+    for k in range(1, 7):
+        L2 = L.copy()
+        L2["exh_d"] = np.where(L2.boat == k, EXH_FAST, EXH_REST)
+        rr, _ = predict_venue(L2, venue, date)
+        for race, d, pkim, p in rr:
+            mp = mando_prob(venue, d, pkim, p)
+            top = np.argsort(-p)[:12]
+            sec = []
+            for a in range(6):
+                pa = float(p[PERMS[:, 0] == a].sum())
+                for b in range(6):
+                    if b != a:
+                        pb = float(p[(PERMS[:, 0] == a) & (PERMS[:, 1] == b)].sum())
+                        sec.append(round(pb / pa * 100, 1) if pa > 0 else 0.0)
+            SCEN.append({
+                "rid": f"{venue}-{int(race)}", "fast": k,
+                "p1": round(float(p[PERMS[:, 0] == 0].sum()) * 100),
+                "p_nige": round(pkim[0] * 100), "p_sashi": round(pkim[1] * 100), "p_makuri": round(pkim[2] * 100),
+                "p_mz": round(pkim[3] * 100), "p_other": round(pkim[4] * 100),
+                "mando": None if mp is None else round(mp * 100),
+                "win": ",".join(f"{x*100:.1f}" for x in d.win_prob), "top3": ",".join(f"{x*100:.1f}" for x in d.top3_prob),
+                "first": ",".join(f"{float(p[PERMS[:, 0] == a].sum())*100:.1f}" for a in range(6)),
+                "sec": ",".join(str(x) for x in sec),
+                "tri": ",".join(f"{COMBO[i]}:{p[i]*100:.2f}" for i in top),
+            })
+
+
 def write_app(date, trained):
     import json
     Path("data/app").mkdir(parents=True, exist_ok=True)
@@ -332,6 +393,7 @@ def write_app(date, trained):
             {"label": "作成", "value": "predict.py(指数v4+潮ルール+モーター成績)"}]
     for k in ("races", "boats", "tri", "second", "third"):
         json.dump({"rows": APP[k], "meta": meta}, open(f"data/app/{k}.json", "w", encoding="utf-8"), ensure_ascii=False)
+    json.dump({"rows": SCEN, "meta": meta}, open("data/app/scen.json", "w", encoding="utf-8"), ensure_ascii=False)
 
 
 def main():
@@ -353,7 +415,7 @@ def main():
         update_data(target)
     print("■ 準備: 学習データと特徴量を読み込み中...")
     E, mu, sd = ft.build_dataset()
-    H = pd.read_csv("data/history.csv.gz", dtype={"venue": str, "regno": str, "finish": str, "course": str})
+    H = pd.read_csv("data/history.csv", dtype={"venue": str, "regno": str, "finish": str, "course": str})
     H = H[H.date < date]
     print(f"  成績データ: {H.date.max()} まで / 学習データ: {E.date.max()} まで")
 
@@ -383,6 +445,7 @@ def main():
         print(f"\n{'='*70}\n■ {NAMES[v]} {date}  ({len(rr)}レース)  モデル学習: {pk['trained_through']}まで"
               + ("  ※展示タイム未取得(展示前の予想)" if no_exh else ""))
         b, t = show(v, date, rr, L, a.top)
+        collect_scen(v, L, date)
         all_boat += b
         all_tri += t
     if all_boat:

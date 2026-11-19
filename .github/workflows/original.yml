@@ -1,1 +1,25 @@
-original_daily.yml
+name: 展示の周回データを保存
+on:
+  schedule:
+    - cron: "30 12 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 平和島の展示航走データを取得
+        run: python original.py
+      - name: 変更があればコミット
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A data/original
+          git diff --cached --quiet || (git commit -m "展示の周回データを保存" && git pull --rebase && git push)
+

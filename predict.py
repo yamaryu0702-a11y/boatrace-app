@@ -27,7 +27,7 @@ import features as ft
 import fetch as fetchmod
 import tide736 as t7
 from parse import parse_b
-from trifecta_lib import COMBO, tri_probs
+from trifecta_lib import COMBO, PERMS, tri_probs
 
 NAMES = {"04": "平和島", "05": "多摩川"}
 RF = ["nat_win_d", "exh_d", "f20_st_d", "c_win_all_d", "cls_d", "motor_2r_d", "mo60_d", "rt_d"]
@@ -233,6 +233,10 @@ def predict_venue(L, venue, date):
         pkim = np.zeros(len(KIM_NAMES))
         pkim[pk["kimarite_model"].classes_] = pk["kimarite_model"].predict_proba(x)[0]
         p = tri_probs(pkim, w, t3, pk["tables"], pk["bw"], pk["bt"], *pk["gamma"])
+        # 表示する1着率・3連対率は、3連単ベース(120通りの合計)にそろえる。艇モデルの値より、1号艇が強いレースで実際に近い(検証済み)
+        d = d.copy()
+        d["win_prob"] = [float(p[PERMS[:, 0] == i].sum()) for i in range(6)]
+        d["top3_prob"] = [float(p[(PERMS == i).any(axis=1)].sum()) for i in range(6)]
         race_rows.append((race, d, pkim, p))
     return race_rows, pk
 

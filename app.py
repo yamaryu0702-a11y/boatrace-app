@@ -388,7 +388,10 @@ def parse_direct(txt):
 
 
 def boat_pick(label, key):
-    return st.multiselect(label, [1, 2, 3, 4, 5, 6], key=key, format_func=lambda x: f"{EMOJI[x - 1]} {x}号艇")
+    """艇のボタンをタップして選ぶ(複数選択。もう一度タップすると外れる)"""
+    st.markdown(f'<div style="font-weight:700;margin:6px 0 2px">{label}</div>', unsafe_allow_html=True)
+    got = st.pills(label, [1, 2, 3, 4, 5, 6], selection_mode="multi", key=key, format_func=lambda x: f"{EMOJI[x - 1]} {x}", label_visibility="collapsed")
+    return got or []
 
 
 def set_ui(i):
@@ -399,17 +402,13 @@ def set_ui(i):
                            placeholder="1-2-3, 1-3-2\n2-1-3")
         return parse_direct(txt) if txt.strip() else ([], [])
     if mode == "ボックス":
-        bs = boat_pick("ボックスにする艇(3艇以上)", f"bb_{race}_{i}")
+        bs = boat_pick("ボックスにする艇(3艇以上をタップ)", f"bb_{race}_{i}")
         if len(bs) < 3:
             return [], []
         return ["-".join(map(str, p)) for p in itertools.permutations(sorted(bs), 3)], []
-    c1_, c2_, c3_ = st.columns(3)
-    with c1_:
-        f1 = boat_pick("1着", f"bf1_{race}_{i}")
-    with c2_:
-        f2 = boat_pick("2着", f"bf2_{race}_{i}")
-    with c3_:
-        f3 = boat_pick("3着", f"bf3_{race}_{i}")
+    f1 = boat_pick("1着", f"bf1_{race}_{i}")
+    f2 = boat_pick("2着", f"bf2_{race}_{i}")
+    f3 = boat_pick("3着", f"bf3_{race}_{i}")
     out = ["-".join(map(str, p)) for p in itertools.product(sorted(f1), sorted(f2), sorted(f3)) if len(set(p)) == 3]
     return out, []
 

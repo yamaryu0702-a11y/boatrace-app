@@ -293,7 +293,7 @@ def show(venue, date, race_rows, L, show_top):
     return boat_out, tri_out
 
 
-APP = {"races": [], "boats": [], "tri": [], "second": [], "third": []}
+APP = {"races": [], "boats": [], "tri": [], "second": [], "third": [], "tri_all": []}   # tri_all: 120通りすべて(Streamlitの出目入力用。JSONには出さない)
 
 
 def condition_tags(venue, race, pkim, p1, mp, easy):
@@ -365,6 +365,8 @@ def collect_app(venue, date, race, d, pkim, p, mp, label, L):
                 pc = float(p[(PERMS[:, 0] == a) & (PERMS[:, 1] == b) & (PERMS[:, 2] == c)].sum())
                 APP["third"].append({"rid": rid, "first": a + 1, "second": b + 1, "third": c + 1, "p_pair": round(pab * 100, 2),
                                      "prob": round(pc / pab * 100, 1) if pab > 0 else 0.0})
+    for rank, i in enumerate(top, 1):
+        APP["tri_all"].append({"rid": rid, "rank": rank, "combo": COMBO[i], "prob": round(float(p[i]) * 100, 3)})
     for rank, i in enumerate(top[:12], 1):
         APP["tri"].append({"rid": rid, "venue": venue, "race": int(race), "rank": rank, "combo": COMBO[i], "prob": round(float(p[i]) * 100, 2)})
 

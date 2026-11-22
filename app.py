@@ -25,7 +25,15 @@ BOAT = ["#ffffff", "#1a1a1a", "#d93025", "#1a56db", "#f4c20d", "#1e9e4a"]
 EMOJI = ["⚪", "⚫", "🔴", "🔵", "🟡", "🟢"]
 KIM = [("逃げ", "p_nige", "#0e7490"), ("差し", "p_sashi", "#f59e0b"), ("まくり", "p_makuri", "#e11d48"),
        ("まくり差し", "p_mz", "#7c3aed"), ("その他", "p_other", "#94a3b8")]
-LOCK = threading.Lock()
+@st.cache_resource
+def _get_lock():
+    """予想の計算中に、別の計算が割り込まないようにするための鍵。
+    ページの更新のたびにこのファイルは読み直されるので、鍵も作り直されると意味がない(平和島と多摩川の結果が混ざる原因になる)。
+    cache_resource に入れて、全員・全回で同じ鍵を使う。"""
+    return threading.Lock()
+
+
+LOCK = _get_lock()
 
 st.set_page_config(page_title="ボートレース予想", page_icon="🚤", layout="wide")
 st.markdown("""
@@ -114,6 +122,10 @@ def compute(date_iso, venue, before_json):
         for race, d, pkim, p in rr:
             P.collect_app(venue, date_iso, race, d, pkim, p, P.mando_prob(venue, d, pkim, p), "", L)
         out = {k: pd.DataFrame(v) for k, v in P.APP.items()}
+    # 念のため、この場(venue)のレースだけに絞る(rid は「場コード-レース番号」)
+    for k, df in out.items():
+        if "rid" in df.columns:
+            out[k] = df[df.rid.astype(str).str.startswith(venue + "-")].reset_index(drop=True)
     return out, pk["trained_through"]
 
 

@@ -1,10 +1,13 @@
-"""ボートレース予想(Streamlit)。平和島・多摩川。
+﻿"""ボートレース予想(Streamlit)。平和島・多摩川。
 - 一覧(表紙)でレースを選ぶと詳細ページへ。展示タイムは、ボタンで公式サイトから取り込む/手入力で、その場で再計算する。
 - 予想の計算は predict.py と同じもの(指数v4)。成績データは、GitHub Actionsが毎朝更新する。
 """
 import datetime as dt
+import itertools
 import json
+import re
 import threading
+import unicodedata
 
 import altair as alt
 import numpy as np
@@ -272,6 +275,7 @@ if ss.get("ctx") != (date_iso, venue):
 
 data, trained = compute(date_iso, venue, merged_before(date_iso, venue))
 R, B, T, S2, S3 = data["races"], data["boats"], data["tri"], data["second"], data["third"]
+TA = data["tri_all"]   # 3連単120通りすべて(出目入力用)
 
 # ---- 表紙(レース一覧) ----
 if ss.get("race") is None:
@@ -363,6 +367,95 @@ with g2:
     tt = T[T.rid == r.rid].sort_values("rank")
     rows = [[(str(int(x["rank"])), "l", ""), (combo_html(x.combo), "l", ""), (num(x.prob, "{:.2f}"), "", shade(x.prob, 10))] for _, x in tt.iterrows()]
     st.markdown('<div class="card"><h4>3連単の確率 上位12通り</h4>' + html_table([("順位", True), ("出目", True), ("確率(%)", False)], rows) + "</div>", unsafe_allow_html=True)
+
+st.markdown("**買い目の確率を見る(直接入力・フォーメーション・ボックス)**")
+st.caption("買い目は最大3セットまで。セットごとに、入力のしかたを選べます。確率はモデルの推定値です。")
+ta = TA[TA.rid == r.rid].set_index("combo")
+
+
+def parse_direct(txt):
+    seen, bad = [], []
+    for tok in re.split(r"[,\s、，]+", txt.strip()):
+        if not tok:
+            continue
+        ds = re.findall(r"[1-6１-６]", tok)
+        ds = [str("123456".index(unicodedata.normalize("NFKC", x)) + 1) for x in ds]
+        if len(ds) != 3 or len(set(ds)) != 3 or len(re.sub(r"[1-6１-６\-－ー・/]", "", tok)) > 0:
+            bad.append(tok)
+        elif "-".join(ds) not in seen:
+            seen.append("-".join(ds))
+    return seen, bad
+
+
+def boat_pick(label, key):
+    return st.multiselect(label, [1, 2, 3, 4, 5, 6], key=key, format_func=lambda x: f"{EMOJI[x - 1]} {x}号艇")
+
+
+def set_ui(i):
+    """1セット分の買い目を選ぶ。戻り値: (出目のリスト, 読み取れなかった入力)"""
+    mode = st.radio("買い方", ["フォーメーション", "ボックス", "直接入力"], horizontal=True, key=f"bm_{race}_{i}")
+    if mode == "直接入力":
+        txt = st.text_area("出目(例: 1-2-3, 1-3-2, 2-1-3 のように、カンマ・スペース・改行で区切って、いくつでも)", key=f"bd_{race}_{i}", height=80,
+                           placeholder="1-2-3, 1-3-2\n2-1-3")
+        return parse_direct(txt) if txt.strip() else ([], [])
+    if mode == "ボックス":
+        bs = boat_pick("ボックスにする艇(3艇以上)", f"bb_{race}_{i}")
+        if len(bs) < 3:
+            return [], []
+        return ["-".join(map(str, p)) for p in itertools.permutations(sorted(bs), 3)], []
+    c1_, c2_, c3_ = st.columns(3)
+    with c1_:
+        f1 = boat_pick("1着", f"bf1_{race}_{i}")
+    with c2_:
+        f2 = boat_pick("2着", f"bf2_{race}_{i}")
+    with c3_:
+        f3 = boat_pick("3着", f"bf3_{race}_{i}")
+    out = ["-".join(map(str, p)) for p in itertools.product(sorted(f1), sorted(f2), sorted(f3)) if len(set(p)) == 3]
+    return out, []
+
+
+def show_set(i, combos, bad):
+    if bad:
+        st.warning("読み取れなかった入力: " + "、".join(bad) + "　(例: 1-2-3)")
+    if not combos:
+        st.info("買い目を選ぶと、ここに確率が出ます。")
+        return
+    ok = [c for c in combos if c in ta.index]
+    df = pd.DataFrame({"combo": ok, "prob": [float(ta.loc[c, "prob"]) for c in ok], "rank": [int(ta.loc[c, "rank"]) for c in ok]}).sort_values("prob", ascending=False)
+    tot = df.prob.sum()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("点数", f"{len(df)}点")
+    m2.metric("どれかが当たる確率", f"{tot:.2f}%")
+    m3.metric("1点あたりの平均確率", f"{tot / len(df):.2f}%")
+    show = df if len(df) <= 30 else df.head(30)
+    rows_c = [[(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
+               (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")] for _, x in show.iterrows()]
+    st.markdown(html_table([("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)], rows_c), unsafe_allow_html=True)
+    if len(df) > 30:
+        st.caption(f"確率の高い順に、上位30点を表示しています(全{len(df)}点)。")
+        with st.expander(f"残りの{len(df) - 30}点も見る"):
+            rows_r = [[(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
+                       (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")] for _, x in df.iloc[30:].iterrows()]
+            st.markdown(html_table([("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)], rows_r), unsafe_allow_html=True)
+
+
+tabs = st.tabs(["買い目1", "買い目2", "買い目3"])
+sets = []
+for i, tb in enumerate(tabs, 1):
+    with tb:
+        cm, bd = set_ui(i)
+        sets.append(cm)
+        show_set(i, cm, bd)
+used = [(i + 1, [c for c in cm if c in ta.index]) for i, cm in enumerate(sets) if cm]
+if len(used) >= 2:
+    allc = sorted({c for _, cm in used for c in cm})
+    rows_s = [[(f"買い目{i}", "l", ""), (f"{len(cm)}点", "", ""), (f"{sum(float(ta.loc[c, 'prob']) for c in cm):.2f}", "", "")] for i, cm in used]
+    rows_s.append([("<b>全セットの合計(重複は1点と数える)</b>", "l", ""), (f"<b>{len(allc)}点</b>", "", ""), (f"<b>{sum(float(ta.loc[c, 'prob']) for c in allc):.2f}</b>", "", "")])
+    st.markdown("**セットごとの点数と、どれかが当たる確率(%)**")
+    st.markdown(html_table([("買い目", True), ("点数", False), ("当たる確率(%)", False)], rows_s), unsafe_allow_html=True)
+if sets and any(sets):
+    st.caption("「損益分岐」は、その出目のオッズが、この倍率より高ければ、確率から見て期待値がプラスになる目安です(モデルの確率が正しい場合)。"
+               "「どれかが当たる確率」は、選んだ出目のどれか1つが的中する確率の合計です。")
 
 st.markdown("**各艇が1着のときの、2着の確率(%)**")
 a = st.radio("1着の艇", [1, 2, 3, 4, 5, 6], horizontal=True, format_func=lambda x: f"{EMOJI[x - 1]} {x}号艇", key="pie1", label_visibility="collapsed")

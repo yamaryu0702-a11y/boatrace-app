@@ -1,0 +1,44 @@
+name: 締切前のオッズを保存
+on:
+  schedule:
+    - cron: "*/10 0-11 * * *"    # 日本時間9:00〜21:00に、10分おき(ナイター対応)
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: odds-save
+  cancel-in-progress: false
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 保存用ブランチ(odds-data)を用意
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin odds-data >/dev/null 2>&1; then
+            git fetch origin odds-data
+            git worktree add dat -B odds-data origin/odds-data
+          else
+            git worktree add --detach dat
+            cd dat
+            git checkout --orphan odds-data
+            git rm -rf . -q
+          fi
+      - name: オッズを取得
+        run: python odds_save.py --out dat/data/odds
+      - name: 変更があれば、odds-data ブランチにコミット
+        run: |
+          cd dat
+          git add -A data/odds || true
+          if ! git diff --cached --quiet; then
+            git commit -m "オッズを保存"
+            git push origin odds-data || { git pull --rebase origin odds-data && git push origin odds-data; }
+          fi

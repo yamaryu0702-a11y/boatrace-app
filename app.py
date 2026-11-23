@@ -87,7 +87,7 @@ st.markdown("""
 @st.cache_resource(show_spinner="学習データと特徴量を読み込み中…(初回のみ)")
 def _load():
     E, mu, sd = ft.build_dataset()
-    H = pd.read_csv("data/history.csv.gz", dtype={"venue": str, "regno": str, "finish": str, "course": str})
+    H = pd.read_csv("data/history.csv", dtype={"venue": str, "regno": str, "finish": str, "course": str})
     return E, mu, sd, H, ft.MOTOR_SD
 
 
@@ -438,17 +438,62 @@ def show_set(i, combos, bad):
     m1.metric("点数", f"{len(df)}点")
     m2.metric("どれかが当たる確率", f"{tot:.2f}%")
     m3.metric("1点あたりの平均確率", f"{tot / len(df):.2f}%")
+    has_odds = bool(ODDS)
+    heads = [("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)] + ([("オッズ", False), ("期待値", False)] if has_odds else [])
+
+    def mk_rows(d):
+        out = []
+        for _, x in d.iterrows():
+            row = [(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
+                   (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")]
+            if has_odds:
+                o = ODDS.get(x.combo)
+                if o is None:
+                    row += [("—", "", ""), ("—", "", "")]
+                else:
+                    ev = x.prob / 100 * o
+                    mark = "background:rgba(46,160,67,.28);font-weight:700" if ev >= EV_MIN else ""
+                    row += [(f"{o:g}", "", ""), (f"{ev:.2f}", "", mark)]
+            out.append(row)
+        return out
+
+    if has_odds:
+        d2 = df[df.combo.isin(ODDS)].copy()
+        d2["ev"] = d2.prob / 100 * d2.combo.map(ODDS)
+        good = d2[d2.ev >= EV_MIN].sort_values("ev", ascending=False)
+        e1, e2, e3 = st.columns(3)
+        e1.metric("オッズ入力済み", f"{len(d2)} / {len(df)}点")
+        e2.metric(f"期待値{EV_MIN:g}以上の点", f"{len(good)}点")
+        e3.metric("入力済み分の平均期待値", f"{d2.ev.mean():.2f}" if len(d2) else "—")
+        if len(good):
+            st.success("買う価値あり(期待値の高い順): " + "、".join(f"{c}(×{e:.2f})" for c, e in zip(good.combo, good.ev)))
+        elif len(d2):
+            st.info(f"この買い目に、期待値{EV_MIN:g}以上の出目はありません。見送りも選択肢です。")
     show = df if len(df) <= 30 else df.head(30)
-    rows_c = [[(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
-               (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")] for _, x in show.iterrows()]
-    st.markdown(html_table([("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)], rows_c), unsafe_allow_html=True)
+    st.markdown(html_table(heads, mk_rows(show)), unsafe_allow_html=True)
     if len(df) > 30:
         st.caption(f"確率の高い順に、上位30点を表示しています(全{len(df)}点)。")
         with st.expander(f"残りの{len(df) - 30}点も見る"):
-            rows_r = [[(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
-                       (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")] for _, x in df.iloc[30:].iterrows()]
-            st.markdown(html_table([("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)], rows_r), unsafe_allow_html=True)
+            st.markdown(html_table(heads, mk_rows(df.iloc[30:])), unsafe_allow_html=True)
 
+
+def parse_odds(txt):
+    """『1-2-3 25.4』のような行を {出目: オッズ} に。全角・区切り違いも読む"""
+    t = unicodedata.normalize("NFKC", txt)
+    out = {}
+    for a, b, c, o in re.findall(r"([1-6])\s*[-ー=・/]\s*([1-6])\s*[-ー=・/]\s*([1-6])[\s:,=×x]+(\d+(?:\.\d+)?)", t):
+        if len({a, b, c}) == 3 and float(o) > 0:
+            out[f"{a}-{b}-{c}"] = float(o)
+    return out
+
+
+with st.expander("オッズを入力して、期待値を見る(期待値＝確率×オッズ。1を超えれば、確率上は買う価値あり)"):
+    st.caption("1行に1点、「出目 オッズ」の形で入力します(例: 1-2-3 12.5)。買い目に入れた出目だけで構いません。入力すると、下の買い目の表に、オッズと期待値が出ます。")
+    odds_txt = st.text_area("オッズ", key=f"od_{race}", height=110, placeholder="1-2-3 12.5\n1-3-2 18.0\n2-1-3 30.2", label_visibility="collapsed")
+    EV_MIN = st.number_input("期待値の基準(モデルの誤差を見込んで、1.1〜1.2くらいが目安)", min_value=0.5, max_value=3.0, value=1.1, step=0.05, key="evmin")
+    ODDS = parse_odds(odds_txt)
+    if odds_txt.strip():
+        st.caption(f"読み取れたオッズ: {len(ODDS)}点")
 
 tabs = st.tabs(["買い目1", "買い目2", "買い目3"])
 sets = []

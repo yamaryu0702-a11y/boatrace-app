@@ -487,13 +487,65 @@ def parse_odds(txt):
     return out
 
 
-with st.expander("オッズを入力して、期待値を見る(期待値＝確率×オッズ。1を超えれば、確率上は買う価値あり)"):
-    st.caption("1行に1点、「出目 オッズ」の形で入力します(例: 1-2-3 12.5)。買い目に入れた出目だけで構いません。入力すると、下の買い目の表に、オッズと期待値が出ます。")
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_odds(d8, jcd, rno):
+    """公式サイトの3連単オッズ(120点)を1回で取る。列=1着の艇、行=2着×3着。60秒は同じ結果を使い回す"""
+    import requests
+    h = requests.get("https://www.boatrace.jp/owpc/pc/race/odds3t", params={"rno": rno, "jcd": jcd, "hd": d8},
+                     headers={"User-Agent": "Mozilla/5.0"}, timeout=25).text
+    m = re.search(r'<tbody class="is-p3-0">(.*?)</tbody>', h, re.S)
+    out = {}
+    if not m:
+        return out
+    left, second = [0] * 6, [0] * 6
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", m.group(1), re.S):
+        cells = re.findall(r"<td([^>]*)>(.*?)</td>", tr, re.S)
+        k = 0
+        for g in range(6):
+            if left[g] == 0:
+                if k >= len(cells):
+                    break
+                a, v = cells[k]
+                k += 1
+                rs = re.search(r'rowspan="(\d+)"', a)
+                left[g] = int(rs.group(1)) if rs else 1
+                second[g] = int(re.sub(r"\D", "", v) or 0)
+            if k + 1 >= len(cells):
+                break
+            b = int(re.sub(r"\D", "", cells[k][1]) or 0)
+            vo = cells[k + 1][1]
+            k += 2
+            left[g] -= 1
+            try:
+                o = float(vo.strip().replace(",", ""))
+            except ValueError:
+                continue
+            if len({g + 1, second[g], b}) == 3:
+                out[f"{g + 1}-{second[g]}-{b}"] = o
+    return out
+
+
+st.markdown("**オッズと期待値(期待値＝確率×オッズ。1を超えれば、確率上は買う価値あり)**")
+fk = f"fo_{date_iso}_{venue}_{race}"
+ob1, ob2 = st.columns([1, 2])
+if ob1.button("最新オッズを取得", key=f"fb_{race}", help="公式サイトから、このレースの3連単オッズ全120点を取ります(10秒ほど)"):
+    with st.spinner("公式サイトからオッズを取得中…"):
+        try:
+            st.session_state[fk] = (fetch_odds(date_iso.replace("-", ""), venue, race), dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%H:%M:%S"))
+        except Exception as e:
+            st.session_state[fk] = ({}, None)
+            ob2.error("取得できませんでした。しばらくして、もう一度お試しください。")
+got, got_at = st.session_state.get(fk, ({}, None))
+if got_at:
+    if got:
+        ob2.caption(f"{got_at}時点のオッズ({len(got)}点)。更新するときは、もう一度ボタンを押します。")
+    else:
+        ob2.warning("オッズがありません(発売前、または、レース終了後です)。下の欄に、手入力もできます。")
+with st.expander("オッズを手入力する(取得できないとき・一部だけ試したいとき)"):
+    st.caption("1行に1点、「出目 オッズ」の形で入力します(例: 1-2-3 12.5)。取得したオッズより、手入力が優先されます。")
     odds_txt = st.text_area("オッズ", key=f"od_{race}", height=110, placeholder="1-2-3 12.5\n1-3-2 18.0\n2-1-3 30.2", label_visibility="collapsed")
-    EV_MIN = st.number_input("期待値の基準(モデルの誤差を見込んで、1.1〜1.2くらいが目安)", min_value=0.5, max_value=3.0, value=1.1, step=0.05, key="evmin")
-    ODDS = parse_odds(odds_txt)
-    if odds_txt.strip():
-        st.caption(f"読み取れたオッズ: {len(ODDS)}点")
+EV_MIN = st.number_input("期待値の基準(モデルの誤差を見込んで、1.1〜1.2くらいが目安)", min_value=0.5, max_value=3.0, value=1.1, step=0.05, key="evmin")
+ODDS = {**got, **parse_odds(odds_txt)}
 
 tabs = st.tabs(["買い目1", "買い目2", "買い目3"])
 sets = []

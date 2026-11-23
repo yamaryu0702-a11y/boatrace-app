@@ -87,7 +87,7 @@ st.markdown("""
 @st.cache_resource(show_spinner="学習データと特徴量を読み込み中…(初回のみ)")
 def _load():
     E, mu, sd = ft.build_dataset()
-    H = pd.read_csv("data/history.csv", dtype={"venue": str, "regno": str, "finish": str, "course": str})
+    H = pd.read_csv("data/history.csv.gz", dtype={"venue": str, "regno": str, "finish": str, "course": str})
     return E, mu, sd, H, ft.MOTOR_SD
 
 

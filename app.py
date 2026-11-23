@@ -230,6 +230,35 @@ def num(v, fmt="{:.0f}"):
     return "—" if v is None or pd.isna(v) else fmt.format(v)
 
 
+# 出目の「目安の線」(%): 検証期間で、各艇×着順ごとに、その線以上の出目をまとめて買ったときの回収率が最も高かった線(threshold_summary.py)
+THR = {
+    "04": {(1, 1): 2, (1, 2): 2, (1, 3): 1, (1, 4): 1, (1, 5): 1, (1, 6): 1, (2, 1): 1, (2, 2): 1, (2, 3): 1, (2, 4): 2, (2, 5): 2, (2, 6): 2, (3, 1): 1, (3, 2): 1, (3, 3): 2, (3, 4): 2, (3, 5): 0.5, (3, 6): 1},
+    "05": {(1, 1): 2, (1, 2): 0.5, (1, 3): 3, (1, 4): 2, (1, 5): 0.5, (1, 6): 0.5, (2, 1): 3, (2, 2): 0.5, (2, 3): 2, (2, 4): 3, (2, 5): 3, (2, 6): 2, (3, 1): 1, (3, 2): 2, (3, 3): 2, (3, 4): 0.5, (3, 5): 0.5, (3, 6): 3},
+}
+MARK = "background:rgba(46,160,67,.40);font-weight:700"
+
+
+def thr_of(venue, combo):
+    """その出目の目安の線(%)。1着・2着・3着に付く艇それぞれの線のうち、いちばん高いもの"""
+    a, b, c = (int(x) for x in combo.split("-"))
+    t = THR.get(venue, {})
+    return max(t.get((1, a), 1), t.get((2, b), 1), t.get((3, c), 1))
+
+
+def pstyle(venue, combo, p):
+    """確率(%)のセルの色。目安の線以上なら緑、それ以外は確率の大きさに応じた帯"""
+    return MARK if p >= thr_of(venue, combo) else shade(p, 10)
+
+
+def kata(mx):
+    """本命の1着確率(%)から、レースの型: 明確(55%以上) / 中間 / 混戦(35%未満)"""
+    if mx >= 55:
+        return "明確", "color:#3fb950;font-weight:700"
+    if mx < 35:
+        return "混戦", "color:#f0b429;font-weight:700"
+    return "中間", ""
+
+
 def html_table(heads, rows):
     """heads: [(ラベル, 左寄せか)]、rows: [[(html, class, style), ...]]。1行の文字列にして返す(markdownに崩されないため)"""
     th = "".join(f'<th class="{"l" if l else ""}">{h}</th>' for h, l in heads)
@@ -302,17 +331,20 @@ if ss.get("race") is None:
         st.rerun() if n else None
     n_ex = int(B.groupby("race").exhibit.apply(lambda s: s.notna().all()).sum())
     b2.caption(f"展示タイム入りのレース: {n_ex}/{len(races)}　／　モデルの学習: {trained} まで")
-    heads = [("R", True), ("締切", False), ("1号艇の1着(%)", False), ("逃げ(%)", False), ("差し(%)", False), ("まくり(%)", False),
+    MXW = B.groupby("race").win.max()
+    heads = [("R", True), ("締切", False), ("型(本命の1着%)", False), ("1号艇の1着(%)", False), ("逃げ(%)", False), ("差し(%)", False), ("まくり(%)", False),
              ("まくり差し(%)", False), ("万舟(%)", False), ("潮", True), ("潮の判定", True), ("目印", False), ("本命の3連単", False), ("確率(%)", False)]
     rows = []
     for _, x in R.iterrows():
         mando_hot = pd.notna(x.mando) and x.mando >= 25
-        rows.append([(f'<a class="rl" href="?d={date_iso}&amp;v={venue}&amp;race={int(x.race)}" target="_self">{int(x.race)}R</a>', "l race", ""), (x.deadline or "—", "", ""), (num(x.p1), "", shade(x.p1, 100)),
+        rows.append([(f'<a class="rl" href="?d={date_iso}&amp;v={venue}&amp;race={int(x.race)}" target="_self">{int(x.race)}R</a>', "l race", ""), (x.deadline or "—", "", ""),
+                     (f"{kata(MXW[x.race])[0]} ({MXW[x.race]:.0f})", "", kata(MXW[x.race])[1]), (num(x.p1), "", shade(x.p1, 100)),
                      (num(x.p_nige), "", ""), (num(x.p_sashi), "", ""), (num(x.p_makuri), "", ""), (num(x.p_mz), "", ""),
                      (num(x.mando), "hot" if mando_hot else "", ""), (x.tide or "—", "l", ""), (x.tide_judge or "—", "l", ""),
                      (str(int(x.n_tags)), "good" if x.n_tags > 0 else "", ""), (combo_html(x.top_combo), "", ""), (num(x.top_prob, "{:.1f}"), "", "")])
     st.markdown(html_table(heads, rows), unsafe_allow_html=True)
-    st.caption("レース名(1R, 2R …)を押すと、そのレースの詳細ページに移ります。")
+    st.caption("レース名(1R, 2R …)を押すと、そのレースの詳細ページに移ります。　"
+               "型: 本命(1着確率が最も高い艇)の確率が、55%以上なら「明確」、35%未満なら「混戦」。混戦は、点数が増えて回収率も上がりにくいので、見送りも選択肢です。")
     st.query_params.clear()
     st.stop()
 
@@ -373,12 +405,13 @@ g1, g2 = st.columns(2)
 with g1:
     tags = [x for x in str(r.tags).split(" / ") if x]
     tag_html = "".join(f'<span class="tag{" warn" if x.startswith("万舟") else ""}">{x}</span>' for x in tags) or "当てはまる目印はありません"
-    st.markdown(f'<div class="card"><h4>決まり手の確率(%)</h4>{kim_bar(r)}<p style="font-size:.8rem;margin:0 0 8px">1号艇の1着 <b>{r.p1}%</b>　万舟 <b>{"—" if pd.isna(r.mando) else int(r.mando)}%</b></p>'
+    st.markdown(f'<div class="card"><h4>決まり手の確率(%)</h4>{kim_bar(r)}<p style="font-size:.8rem;margin:0 0 8px">型 <b style="{kata(B[B.race == r.race].win.max())[1]}">{kata(B[B.race == r.race].win.max())[0]}</b>(本命の1着 {B[B.race == r.race].win.max():.0f}%)　1号艇の1着 <b>{r.p1}%</b>　万舟 <b>{"—" if pd.isna(r.mando) else int(r.mando)}%</b></p>'
                 f'<h4>目印</h4><div style="font-size:.78rem;color:#8b97a8;margin-bottom:4px">検証で回収率が比較的高かった条件。買いの推奨ではありません</div>{tag_html}</div>', unsafe_allow_html=True)
 with g2:
     tt = T[T.rid == r.rid].sort_values("rank")
-    rows = [[(str(int(x["rank"])), "l", ""), (combo_html(x.combo), "l", ""), (num(x.prob, "{:.2f}"), "", shade(x.prob, 10))] for _, x in tt.iterrows()]
-    st.markdown('<div class="card"><h4>3連単の確率 上位12通り</h4>' + html_table([("順位", True), ("出目", True), ("確率(%)", False)], rows) + "</div>", unsafe_allow_html=True)
+    rows = [[(str(int(x["rank"])), "l", ""), (combo_html(x.combo), "l", ""), (num(x.prob, "{:.2f}"), "", pstyle(venue, x.combo, x.prob)), (f"{thr_of(venue, x.combo):g}", "", "")] for _, x in tt.iterrows()]
+    st.markdown('<div class="card"><h4>3連単の確率 上位12通り</h4>' + html_table([("順位", True), ("出目", True), ("確率(%)", False), ("目安(%)", False)], rows)
+                + '<div style="font-size:.72rem;color:#8b97a8;margin-top:4px">緑 = 確率が目安の線以上</div></div>', unsafe_allow_html=True)
 
 st.markdown("**買い目の確率を見る(直接入力・フォーメーション・ボックス)**")
 st.caption("買い目は最大3セットまで。セットごとに、入力のしかたを選べます。確率はモデルの推定値です。")
@@ -439,12 +472,12 @@ def show_set(i, combos, bad):
     m2.metric("どれかが当たる確率", f"{tot:.2f}%")
     m3.metric("1点あたりの平均確率", f"{tot / len(df):.2f}%")
     has_odds = bool(ODDS)
-    heads = [("出目", True), ("確率(%)", False), ("順位", False), ("損益分岐(倍)", False)] + ([("オッズ", False), ("期待値", False)] if has_odds else [])
+    heads = [("出目", True), ("確率(%)", False), ("目安(%)", False), ("順位", False), ("損益分岐(倍)", False)] + ([("オッズ", False), ("期待値", False)] if has_odds else [])
 
     def mk_rows(d):
         out = []
         for _, x in d.iterrows():
-            row = [(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", shade(x.prob, 10)), (f"{int(x['rank'])}位 / 120", "", ""),
+            row = [(combo_html(x.combo), "l", ""), (f"{x.prob:.2f}", "", pstyle(venue, x.combo, x.prob)), (f"{thr_of(venue, x.combo):g}", "", ""), (f"{int(x['rank'])}位 / 120", "", ""),
                    (f"{100 / x.prob:.0f}倍" if x.prob > 0 else "—", "", "")]
             if has_odds:
                 o = ODDS.get(x.combo)
@@ -562,6 +595,8 @@ if len(used) >= 2:
     st.markdown("**セットごとの点数と、どれかが当たる確率(%)**")
     st.markdown(html_table([("買い目", True), ("点数", False), ("当たる確率(%)", False)], rows_s), unsafe_allow_html=True)
 if sets and any(sets):
+    st.caption("確率が緑のものは、「目安(%)」以上の出目です。目安は、過去の検証で、その線以上をまとめて買うと回収率が高かった線(1着・2着・3着の艇ごとの線のうち、最も高いもの)です。"
+               "ただし、どの線でも、まとめ買いの回収率は100%未満でした。オッズとの組み合わせ(期待値)で判断してください。")
     st.caption("「損益分岐」は、その出目のオッズが、この倍率より高ければ、確率から見て期待値がプラスになる目安です(モデルの確率が正しい場合)。"
                "「どれかが当たる確率」は、選んだ出目のどれか1つが的中する確率の合計です。")
 
